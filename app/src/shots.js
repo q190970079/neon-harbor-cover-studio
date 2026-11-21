@@ -1,30 +1,67 @@
-// Fixed scenes for screenshots, driven by the ?shot= query the page was opened with.
-//   ?shot=cover   — the cover alone, full viewport, at the scene's export size.
-//   ?shot=editor  — the whole editor, with the scene's sample photos loaded.
-// Scene parameters, all optional:
-//   layout   syndicate | strips | banner          (default syndicate)
-//   theme    sunset | neon | golden | midnight    (default sunset)
-//   title    the cover's title words              (default NEON HARBOR)
-//   tagline  the spaced capitals over the title   (default SUNSET SYNDICATE)
-//   photos   comma-separated sample names, no extension (default heroine,chase,skyline,boulevard)
-//   size     an export size such as 1920x1080     (cover scenes only; default 1080x1080)
-// The scene is applied through the helpers main.js passes in, and window.__shotReady is
-// set after two animation frames once the images are drawn, so a screenshot tool can
-// wait for exactly the moment the scene is on screen.
+// shots.js — fixed scenes for screenshots, driven entirely by the URL.
+//
+// The editor is a live tool, which makes it a poor camera subject; a shot
+// scene is the opposite: ?shot=cover or ?shot=editor plus layout, theme,
+// title, tagline, photos and size parameters describe one exact frame.
+// runShot applies that frame through the editor's own hooks, and once the
+// frame has painted twice it raises window.__shotReady so the capture
+// script knows the pixels are final.
+//
+//   ?shot=cover&layout=hero&theme=sunset&photos=hero,boat,deco,boulevard
+//     &title=NEON%20HARBOR&tagline=SUNSET%20SYNDICATE&size=1920x1080
+//   ?shot=editor&layout=hero&theme=sunset&photos=hero,boat,deco,boulevard
 
-const DEFAULT_PHOTOS = 'heroine,chase,skyline,boulevard';
+/** Parse a "1920x1080" style size, falling back to the given default. */
+function parseSize(text, fallback) {
+  const m = /^(\d+)x(\d+)$/.exec(text || '');
+  if (!m) return fallback;
+  return { w: Number(m[1]), h: Number(m[2]) };
+}
 
-export async function runShot(shot, query, helpers) {
-  const scene = {
-    layout: query.get('layout') ?? 'syndicate',
-    theme: query.get('theme') ?? 'sunset',
-    title: query.get('title') ?? 'NEON HARBOR',
-    tagline: query.get('tagline') ?? 'SUNSET SYNDICATE',
-    size: query.get('size') ?? '1080x1080',
-  };
-  const names = (query.get('photos') ?? DEFAULT_PHOTOS).split(',').map((n) => n.trim()).filter(Boolean);
-  const photos = await helpers.loadSamples(names);
-  if (shot === 'cover') document.body.classList.add('shot-cover');
-  helpers.applyScene(shot, scene, photos);
-  requestAnimationFrame(() => requestAnimationFrame(() => { window.__shotReady = true; }));
+/** Resolve after two animation frames: the scene has definitely painted. */
+function afterTwoFrames() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
+}
+
+/**
+ * Apply the shot scene named in the URL, if there is one.
+ * `editor` is the hooks object studio.js builds: its canvas, a sample
+ * loader, a state patcher and a redraw. Returns true when a scene ran.
+ */
+export async function runShot(editor) {
+  const params = new URLSearchParams(location.search);
+  const shot = params.get('shot');
+  if (!shot) return false;
+
+  const names = (params.get('photos') || 'hero,boat,deco,boulevard')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const patch = {};
+  if (params.get('layout')) patch.layout = params.get('layout');
+  if (params.get('theme')) patch.theme = params.get('theme');
+  if (params.get('title')) patch.title = params.get('title');
+  if (params.get('tagline')) patch.tagline = params.get('tagline');
+
+  if (shot === 'cover') {
+    // The cover alone fills the viewport: the page's cover mode hides
+    // every control, and the canvas takes the scene's export size so the
+    // capture is the cover at its own aspect, drawn by the app itself.
+    document.body.classList.add('shot-cover');
+    const size = parseSize(params.get('size'), { w: 1920, h: 1080 });
+    editor.canvas.width = size.w;
+    editor.canvas.height = size.h;
+  }
+
+  await editor.loadSamplePhotos(names);
+  if (shot === 'cover') patch.highlight = -1;
+  editor.setPatch(patch);
+  editor.syncControls();
+  editor.redraw();
+  await afterTwoFrames();
+  window.__shotReady = true;
+  return true;
 }
