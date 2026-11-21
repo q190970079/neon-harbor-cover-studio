@@ -8,81 +8,66 @@
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<header class="masthead">
-  <div class="brand">
-    <span class="brand-mark">NH</span>
-    <div>
-      <h1>Neon Harbor Cover Studio</h1>
-      <p>Turn your own photos into a multi-panel open-world cover.</p>
-    </div>
-  </div>
+<header>
+  <h1>NEON HARBOR <span>COVER STUDIO</span></h1>
+  <p>Turn your own photos into a multi-panel open-world cover.</p>
 </header>
-
-<main class="workspace">
-  <aside class="controls" aria-label="Cover controls">
-    <section class="group">
+<main>
+  <aside id="controls">
+    <section>
       <h2>Photos</h2>
-      <label class="file-btn">
-        Add your photos
-        <input id="fileInput" type="file" accept="image/*" multiple hidden>
-      </label>
-      <button id="loadSamples" type="button" class="ghost-btn">Load sample set</button>
-      <p id="photoCount" class="hint">No photos yet.</p>
+      <label class="file-btn">Add photos<input id="fileInput" type="file" accept="image/*" multiple hidden></label>
+      <button id="sampleBtn" type="button">Load sample set</button>
+      <div id="photoList" class="chips"></div>
+      <label>Zoom <input id="scaleRange" type="range" min="1" max="2.6" step="0.01" value="1"></label>
+      <label>Pan X <input id="oxRange" type="range" min="-1" max="1" step="0.01" value="0"></label>
+      <label>Pan Y <input id="oyRange" type="range" min="-1" max="1" step="0.01" value="0"></label>
     </section>
-
-    <section class="group">
+    <section>
       <h2>Panels</h2>
-      <div id="panelList" class="panel-list"></div>
-      <p id="selectedLabel" class="hint">Editing panel 1</p>
-      <label class="slider-row">Zoom
-        <input id="zoom" type="range" min="1" max="3" step="0.01" value="1">
-      </label>
-      <label class="slider-row">Offset X
-        <input id="offsetX" type="range" min="-1" max="1" step="0.01" value="0">
-      </label>
-      <label class="slider-row">Offset Y
-        <input id="offsetY" type="range" min="-1" max="1" step="0.01" value="0">
-      </label>
-      <p class="hint">Tip: click a panel on the canvas, then drag to pan its photo.</p>
+      <div id="panelList"></div>
+      <p class="hint">Use &lt; &gt; to swap a panel's photo, or click the cover and drag to reframe.</p>
     </section>
-
-    <section class="group">
+    <section>
       <h2>Look</h2>
-      <label class="field">Layout
-        <select id="layout"></select>
+      <label>Layout
+        <select id="layoutSel">
+          <option value="hero">Hero + Trio</option>
+          <option value="stripes">Slanted Stripes</option>
+          <option value="banner">Banner + Three</option>
+        </select>
       </label>
-      <label class="field">Theme
-        <select id="theme"></select>
+      <label>Theme
+        <select id="themeSel">
+          <option value="sunset">Sunset</option>
+          <option value="neon">Neon</option>
+          <option value="gold">Gold</option>
+          <option value="midnight">Midnight</option>
+        </select>
       </label>
     </section>
-
-    <section class="group">
+    <section>
       <h2>Words</h2>
-      <label class="field">Title
-        <input id="title" type="text" value="NEON HARBOR" maxlength="40" autocomplete="off">
-      </label>
-      <label class="field">Tagline
-        <input id="tagline" type="text" value="SUNSET SYNDICATE" maxlength="48" autocomplete="off">
-      </label>
+      <label>Title <input id="titleInput" type="text" value="NEON HARBOR" maxlength="30"></label>
+      <label>Tagline <input id="taglineInput" type="text" value="SUNSET SYNDICATE" maxlength="40"></label>
     </section>
-
-    <section class="group">
+    <section>
       <h2>Export</h2>
-      <label class="field">Size
-        <select id="size"></select>
+      <label>Size
+        <select id="sizeSel">
+          <option value="1080x1080">1080 x 1080 (square)</option>
+          <option value="1080x1350">1080 x 1350 (portrait)</option>
+          <option value="1920x1080">1920 x 1080 (wide)</option>
+        </select>
       </label>
-      <button id="exportBtn" type="button" class="export-btn">Export PNG</button>
+      <button id="exportBtn" type="button" class="primary">Export PNG</button>
     </section>
+    <p id="status" class="status">Loading samples...</p>
   </aside>
-
-  <section class="stage">
-    <p id="status" class="status" role="status">Loading the sample set…</p>
-    <div class="canvas-wrap">
-      <canvas id="canvas" width="1080" height="1080"></canvas>
-    </div>
-  </section>
+  <div id="stage">
+    <canvas id="preview" width="1080" height="1080"></canvas>
+  </div>
 </main>
-
 <script type="module" src="./src/studio.js"></script>
 </body>
 </html>
