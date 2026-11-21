@@ -1,341 +1,357 @@
-// panels.js — the drawing heart of Neon Harbor Cover Studio.
-//
-// Everything a finished cover is made of lives here: three multi-panel
-// layouts built from polygons with diagonal cuts, four colour-grade themes,
-// per-photo crop maths (zoom + offset inside each panel), the stacked title
-// lettering, a spaced tagline, a vignette and a seeded grain pass so every
-// render of the same state is pixel-for-pixel the same.
-//
-// The module is pure canvas: it never touches the DOM beyond the 2D context
-// it is handed, which is what lets the editor preview and the full-size PNG
-// export share exactly one drawing path.
+// panels.js — Neon Harbor Cover Studio drawing engine.
+// Pure canvas code: slanted multi-panel collage layouts, colour themes,
+// stacked display type, vignette and seeded grain. No network, no assets
+// beyond the photos the caller hands in.
 
-/** Small deterministic PRNG (mulberry32) so the grain never changes between renders. */
+// ---------------------------------------------------------------- layouts
+// Each layout returns polygons in normalised 0..1 coordinates. The
+// polygons tile the whole frame; neighbouring edges share the same slant
+// so the collage reads as one cut-up photograph wall.
+const LAYOUT_DEFS = {
+  // One big hero panel on the left, three stacked panels on the right.
+  hero: [
+    [[0, 0], [0.62, 0], [0.55, 1], [0, 1]],
+    [[0.62, 0], [1, 0], [1, 0.34], [0.585, 0.34]],
+    [[0.585, 0.34], [1, 0.34], [1, 0.67], [0.568, 0.67]],
+    [[0.568, 0.67], [1, 0.67], [1, 1], [0.55, 1]],
+  ],
+  // Four diagonal stripes leaning into the frame.
+  stripes: [
+    [[0, 0], [0.28, 0], [0.16, 1], [0, 1]],
+    [[0.28, 0], [0.53, 0], [0.41, 1], [0.16, 1]],
+    [[0.53, 0], [0.78, 0], [0.66, 1], [0.41, 1]],
+    [[0.78, 0], [1, 0], [1, 1], [0.66, 1]],
+  ],
+  // A wide banner across the top, three panels underneath.
+  banner: [
+    [[0, 0], [1, 0], [1, 0.52], [0, 0.58]],
+    [[0, 0.58], [0.36, 0.545], [0.33, 1], [0, 1]],
+    [[0.36, 0.545], [0.68, 0.53], [0.66, 1], [0.33, 1]],
+    [[0.68, 0.53], [1, 0.52], [1, 1], [0.66, 1]],
+  ],
+};
+
+export const LAYOUTS = [
+  { id: 'hero', label: 'Hero + Three' },
+  { id: 'stripes', label: 'Slanted Stripes' },
+  { id: 'banner', label: 'Banner + Three' },
+];
+
+// ----------------------------------------------------------------- themes
+// overlay: diagonal wash stops. title: gradient stops for the big type.
+// filter values are applied through ctx.filter while photos are drawn.
+export const THEMES = {
+  sunset: {
+    label: 'Sunset — orange / pink / violet',
+    overlay: ['rgba(255,122,40,0.30)', 'rgba(255,61,138,0.24)', 'rgba(84,36,164,0.34)'],
+    saturation: 1.28,
+    contrast: 1.08,
+    title: ['#ffe27a', '#ff8a3c', '#ff3d8a'],
+    gap: '#fff3e2',
+    accent: '#ffb347',
+  },
+  neon: {
+    label: 'Neon — cyan / magenta',
+    overlay: ['rgba(0,229,255,0.22)', 'rgba(64,80,255,0.20)', 'rgba(255,45,220,0.28)'],
+    saturation: 1.5,
+    contrast: 1.16,
+    title: ['#a8fbff', '#2bd9ff', '#ff3df2'],
+    gap: '#e6feff',
+    accent: '#2bf5ff',
+  },
+  gold: {
+    label: 'Gold — amber / honey',
+    overlay: ['rgba(255,196,64,0.26)', 'rgba(255,140,26,0.22)', 'rgba(122,62,10,0.30)'],
+    saturation: 1.16,
+    contrast: 1.06,
+    title: ['#fff6bf', '#ffc93c', '#ff8c1a'],
+    gap: '#fff8e1',
+    accent: '#ffd23c',
+  },
+  midnight: {
+    label: 'Midnight — blue / teal',
+    overlay: ['rgba(16,42,120,0.32)', 'rgba(0,110,160,0.24)', 'rgba(0,60,70,0.34)'],
+    saturation: 1.22,
+    contrast: 1.14,
+    title: ['#c9f2ff', '#38b6ff', '#37ffd0'],
+    gap: '#dff6ff',
+    accent: '#37ffd0',
+  },
+};
+
+export function getTheme(id) {
+  return THEMES[id] || THEMES.sunset;
+}
+
+// ------------------------------------------------------------ panel maths
+// Returns panels for a layout scaled to a W x H canvas:
+// [{ points: [[x, y], ...] }] in device pixels.
+export function getPanels(layoutId, W, H) {
+  const def = LAYOUT_DEFS[layoutId] || LAYOUT_DEFS.hero;
+  return def.map((poly) => ({
+    points: poly.map(([nx, ny]) => [nx * W, ny * H]),
+  }));
+}
+
+function pointInPolygon(x, y, points) {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const [xi, yi] = points[i];
+    const [xj, yj] = points[j];
+    const crosses = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+// Hit test: which panel (index) contains canvas point (x, y), or -1.
+export function hitTestPanel(layoutId, W, H, x, y) {
+  const panels = getPanels(layoutId, W, H);
+  for (let i = panels.length - 1; i >= 0; i--) {
+    if (pointInPolygon(x, y, panels[i].points)) return i;
+  }
+  return -1;
+}
+
+function tracePath(ctx, points) {
+  ctx.beginPath();
+  points.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+  ctx.closePath();
+}
+
+function bboxOf(points) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of points) {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+// ------------------------------------------------------------- photo fill
+// Draws img so it covers the polygon's bounding box, honouring the
+// panel's own zoom and pan, then clips to the slanted polygon.
+function drawPanelPhoto(ctx, img, points, t, theme) {
+  const bb = bboxOf(points);
+  ctx.save();
+  tracePath(ctx, points);
+  ctx.clip();
+  if (!img) {
+    // Placeholder wash so a panel is never blank.
+    const g = ctx.createLinearGradient(bb.x, bb.y, bb.x + bb.w, bb.y + bb.h);
+    g.addColorStop(0, '#3a2b55');
+    g.addColorStop(1, '#12283d');
+    ctx.fillStyle = g;
+    ctx.fillRect(bb.x, bb.y, bb.w, bb.h);
+    ctx.restore();
+    return;
+  }
+  const zoom = t && t.zoom ? t.zoom : 1;
+  const ox = t && t.ox ? t.ox : 0;
+  const oy = t && t.oy ? t.oy : 0;
+  const scale = Math.max(bb.w / img.width, bb.h / img.height) * zoom;
+  const dw = img.width * scale;
+  const dh = img.height * scale;
+  const panX = Math.max(0, (dw - bb.w) / 2);
+  const panY = Math.max(0, (dh - bb.h) / 2);
+  const dx = bb.x + (bb.w - dw) / 2 + ox * panX;
+  const dy = bb.y + (bb.h - dh) / 2 + oy * panY;
+  try {
+    ctx.filter = `saturate(${theme.saturation}) contrast(${theme.contrast})`;
+  } catch (e) { /* filter unsupported: draw unfiltered */ }
+  ctx.drawImage(img, dx, dy, dw, dh);
+  try { ctx.filter = 'none'; } catch (e) { /* noop */ }
+  ctx.restore();
+}
+
+// ------------------------------------------------------------------ grain
+// Deterministic grain: a small noise tile generated from a fixed seed, so
+// every redraw and every export shows exactly the same texture.
 function mulberry32(seed) {
   let a = seed >>> 0;
   return function next() {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 
-/** The three layouts. Each returns panel polygons in 0..1 space, hero first. */
-export const LAYOUTS = {
-  hero: {
-    label: 'Hero Plus Three',
-    panels: [
-      // The big left portrait panel, its right edge leaning with the cut.
-      [[0, 0], [0.585, 0], [0.52, 1], [0, 1]],
-      // Three stacked panels down the right side, seams slanting in sympathy.
-      [[0.605, 0], [1, 0], [1, 0.335], [0.572, 0.385]],
-      [[0.562, 0.415], [1, 0.365], [1, 0.675], [0.538, 0.705]],
-      [[0.528, 0.735], [1, 0.705], [1, 1], [0.51, 1]],
-    ],
-  },
-  strips: {
-    label: 'Diagonal Strips',
-    panels: [
-      [[0, 0], [1, 0], [1, 0.35], [0, 0.435]],
-      [[0, 0.465], [1, 0.38], [1, 0.685], [0, 0.755]],
-      [[0, 0.785], [0.515, 0.72], [0.475, 1], [0, 1]],
-      [[0.545, 0.72], [1, 0.715], [1, 1], [0.505, 1]],
-    ],
-  },
-  banner: {
-    label: 'Banner Over Trio',
-    panels: [
-      [[0, 0], [1, 0], [1, 0.595], [0, 0.66]],
-      [[0, 0.69], [0.325, 0.648], [0.305, 1], [0, 1]],
-      [[0.355, 0.642], [0.665, 0.628], [0.645, 1], [0.335, 1]],
-      [[0.695, 0.622], [1, 0.632], [1, 1], [0.675, 1]],
-    ],
-  },
-};
-
-/** The four colour grades: wash stops, canvas filter, lettering colours. */
-export const THEMES = {
-  sunset: {
-    label: 'Sunset Vice',
-    filter: 'saturate(1.28) contrast(1.06) brightness(1.02)',
-    wash: [[0, 'rgba(255, 138, 61, 0.16)'], [0.55, 'rgba(255, 62, 130, 0.20)'], [1, 'rgba(84, 32, 160, 0.34)']],
-    washBlend: 'soft-light',
-    titleTop: '#ffe259',
-    titleBottom: '#ff4e7a',
-    tagline: '#ffe9d6',
-    gutter: '#fdf6ec',
-    backdrop: '#2a1030',
-  },
-  neon: {
-    label: 'Neon Night',
-    filter: 'saturate(1.45) contrast(1.12) brightness(0.98)',
-    wash: [[0, 'rgba(0, 229, 255, 0.14)'], [0.55, 'rgba(140, 60, 255, 0.18)'], [1, 'rgba(255, 43, 166, 0.30)']],
-    washBlend: 'soft-light',
-    titleTop: '#7df9ff',
-    titleBottom: '#ff3df0',
-    tagline: '#d8fbff',
-    gutter: '#eefcff',
-    backdrop: '#0b1030',
-  },
-  golden: {
-    label: 'Golden Hour',
-    filter: 'saturate(1.16) contrast(1.04) brightness(1.06)',
-    wash: [[0, 'rgba(255, 196, 64, 0.18)'], [0.6, 'rgba(255, 128, 40, 0.20)'], [1, 'rgba(146, 64, 20, 0.32)']],
-    washBlend: 'soft-light',
-    titleTop: '#fff6bf',
-    titleBottom: '#ff8b1f',
-    tagline: '#fff3d0',
-    gutter: '#fff8e6',
-    backdrop: '#33200c',
-  },
-  midnight: {
-    label: 'Midnight Run',
-    filter: 'saturate(1.12) contrast(1.14) brightness(0.94)',
-    wash: [[0, 'rgba(38, 198, 218, 0.13)'], [0.55, 'rgba(24, 78, 160, 0.22)'], [1, 'rgba(6, 20, 64, 0.40)']],
-    washBlend: 'soft-light',
-    titleTop: '#b8fff4',
-    titleBottom: '#3f8cff',
-    tagline: '#d9f4ff',
-    gutter: '#e8f6ff',
-    backdrop: '#081426',
-  },
-};
-
-/** Scale a 0..1 polygon into pixel space. */
-function scalePoly(poly, w, h) {
-  return poly.map(([x, y]) => [x * w, y * h]);
-}
-
-/** Axis-aligned bounds of a pixel-space polygon. */
-function polyBounds(pts) {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const [x, y] of pts) {
-    if (x < minX) minX = x;
-    if (y < minY) minY = y;
-    if (x > maxX) maxX = x;
-    if (y > maxY) maxY = y;
+let grainTile = null;
+function getGrainTile() {
+  if (grainTile) return grainTile;
+  const size = 140;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const g = c.getContext('2d');
+  const data = g.createImageData(size, size);
+  const rand = mulberry32(20261121);
+  for (let i = 0; i < data.data.length; i += 4) {
+    const v = Math.floor(rand() * 255);
+    data.data[i] = v;
+    data.data[i + 1] = v;
+    data.data[i + 2] = v;
+    data.data[i + 3] = 255;
   }
-  return { minX, minY, maxX, maxY, bw: maxX - minX, bh: maxY - minY };
+  g.putImageData(data, 0, 0);
+  grainTile = c;
+  return c;
 }
 
-/** Trace a polygon path on the context. */
-function tracePath(ctx, pts) {
-  ctx.beginPath();
-  pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
-  ctx.closePath();
-}
-
-/**
- * Draw one photo inside one panel: the image is cover-fitted to the panel's
- * bounding box, then the photo's own zoom and offsets are applied, and the
- * panel polygon clips whatever spills.
- */
-function drawPanelPhoto(ctx, pts, photo, theme) {
-  const { minX, minY, bw, bh } = polyBounds(pts);
-  ctx.save();
-  tracePath(ctx, pts);
-  ctx.clip();
-  if (photo && photo.img) {
-    const img = photo.img;
-    const zoom = photo.zoom || 1;
-    const scale = Math.max(bw / img.naturalWidth, bh / img.naturalHeight) * zoom;
-    const dw = img.naturalWidth * scale;
-    const dh = img.naturalHeight * scale;
-    const dx = minX + (bw - dw) / 2 + (photo.ox || 0) * bw * 0.4;
-    const dy = minY + (bh - dh) / 2 + (photo.oy || 0) * bh * 0.4;
-    ctx.filter = theme.filter;
-    ctx.drawImage(img, dx, dy, dw, dh);
-    ctx.filter = 'none';
-  } else {
-    const g = ctx.createLinearGradient(minX, minY, minX + bw, minY + bh);
-    g.addColorStop(0, theme.backdrop);
-    g.addColorStop(1, '#12081c');
-    ctx.fillStyle = g;
-    ctx.fillRect(minX, minY, bw, bh);
-  }
-  ctx.restore();
-}
-
-/** The theme's colour wash, laid over the whole collage at once. */
-function applyWash(ctx, w, h, theme) {
-  const g = ctx.createLinearGradient(0, 0, w * 0.25, h);
-  for (const [pos, colour] of theme.wash) g.addColorStop(pos, colour);
-  ctx.save();
-  ctx.globalCompositeOperation = theme.washBlend;
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
-  ctx.restore();
-  // A whisper of the same gradient in normal mode keeps the grade visible
-  // on browsers where soft-light over photos reads too subtle.
-  ctx.save();
-  ctx.globalAlpha = 0.35;
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
-  ctx.restore();
-}
-
-/** Draw text centred at x, with fixed pixel gaps between the letters. */
-function drawSpaced(ctx, text, cx, y, spacing) {
-  const chars = [...text];
-  const widths = chars.map((c) => ctx.measureText(c).width);
-  const total = widths.reduce((a, b) => a + b, 0) + spacing * (chars.length - 1);
-  let cursor = cx - total / 2;
-  const prevAlign = ctx.textAlign;
-  ctx.textAlign = 'left';
-  chars.forEach((c, i) => {
-    ctx.fillText(c, cursor, y);
-    cursor += widths[i] + spacing;
-  });
-  ctx.textAlign = prevAlign;
-}
-
-/**
- * The lettering: a spaced tagline riding above the title, and the title
- * itself stacked word over word, shrunk until every line fits the frame.
- */
-function drawLettering(ctx, w, h, state, theme) {
-  const title = (state.title || '').trim().toUpperCase();
+// ------------------------------------------------------------------- type
+function drawTitle(ctx, W, H, state, theme) {
+  const title = (state.title || '').trim();
   const tagline = (state.tagline || '').trim().toUpperCase();
-  ctx.save();
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
+  if (!title && !tagline) return;
 
   const lines = title ? title.split(/\s+/) : [];
-  let titleSize = h * 0.19;
-  const setTitleFont = () => {
-    ctx.font = `italic 900 ${titleSize}px "Arial Black", "Helvetica Neue", Arial, sans-serif`;
-  };
-  if (lines.length) {
-    setTitleFont();
-    const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
-    if (widest > w * 0.94) {
-      titleSize *= (w * 0.94) / widest;
-      setTitleFont();
-    }
-  }
-  const lineHeight = titleSize * 0.94;
-  const blockHeight = lines.length * lineHeight;
-  const titleBottom = h - h * 0.045;
-
-  if (tagline) {
-    const tagSize = Math.max(13, h * 0.028);
-    ctx.font = `700 ${tagSize}px "Helvetica Neue", Arial, sans-serif`;
-    ctx.shadowColor = 'rgba(10, 2, 18, 0.85)';
-    ctx.shadowBlur = tagSize * 0.35;
-    ctx.shadowOffsetY = tagSize * 0.08;
-    ctx.fillStyle = theme.tagline;
-    drawSpaced(ctx, tagline, w / 2, titleBottom - blockHeight - tagSize * 0.55, tagSize * 0.62);
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetY = 0;
-  }
-
-  if (lines.length) {
-    const grad = ctx.createLinearGradient(0, titleBottom - blockHeight, 0, titleBottom);
-    grad.addColorStop(0, theme.titleTop);
-    grad.addColorStop(1, theme.titleBottom);
-    ctx.font = `italic 900 ${titleSize}px "Arial Black", "Helvetica Neue", Arial, sans-serif`;
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#170722';
-    ctx.lineWidth = titleSize * 0.16;
-    ctx.shadowColor = 'rgba(12, 0, 20, 0.55)';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetX = titleSize * 0.045;
-    ctx.shadowOffsetY = titleSize * 0.07;
-    lines.forEach((line, i) => {
-      const y = titleBottom - (lines.length - 1 - i) * lineHeight;
-      ctx.strokeText(line, w / 2, y);
-      ctx.fillStyle = grad;
-      ctx.fillText(line, w / 2, y);
-    });
-  }
-  ctx.restore();
-}
-
-/** A soft dark edge all round, to seat the collage like a printed poster. */
-function applyVignette(ctx, w, h) {
-  const r = Math.hypot(w, h) * 0.62;
-  const g = ctx.createRadialGradient(w / 2, h / 2, r * 0.42, w / 2, h / 2, r);
-  g.addColorStop(0, 'rgba(8, 0, 16, 0)');
-  g.addColorStop(1, 'rgba(8, 0, 16, 0.42)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
-}
-
-/** Deterministic film grain: the same seed, the same specks, every render. */
-function applyGrain(ctx, w, h) {
-  const rand = mulberry32(0x9e37 + w * 31 + h * 17);
-  const specks = Math.floor((w * h) / 850);
+  let size = W * 0.17;
+  const fontFor = (s) => `italic 900 ${s}px "Arial Black", "Arial Bold", Arial, sans-serif`;
   ctx.save();
-  for (let i = 0; i < specks; i++) {
-    const v = rand();
-    ctx.fillStyle = v > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
-    ctx.fillRect(rand() * w, rand() * h, 1.4, 1.4);
+  // Shrink until the widest word fits comfortably.
+  for (let guard = 0; guard < 40; guard++) {
+    ctx.font = fontFor(size);
+    const widest = lines.reduce((m, ln) => Math.max(m, ctx.measureText(ln).width), 0);
+    if (widest <= W * 0.88 || size < 12) break;
+    size *= 0.92;
   }
-  ctx.restore();
-}
+  const lineH = size * 0.94;
+  const tagSize = Math.max(13, size * 0.21);
+  const tagGap = tagline ? tagSize * 1.5 : 0;
+  const blockH = lines.length * lineH + tagGap;
+  const baseY = H - H * 0.045 - blockH;
 
-/**
- * Draw the whole cover described by `state` onto a 2D context sized w x h.
- * state: { layout, theme, photos, panelPhoto, title, tagline, highlight }
- * `highlight` is an editor-only panel index to outline, or -1 for a clean
- * export render.
- */
-export function drawCover(ctx, w, h, state) {
-  const theme = THEMES[state.theme] || THEMES.sunset;
-  const layout = LAYOUTS[state.layout] || LAYOUTS.hero;
-  ctx.save();
-  ctx.fillStyle = theme.backdrop;
-  ctx.fillRect(0, 0, w, h);
+  // Soft dark backing so the type stays readable over bright photos.
+  if (lines.length) {
+    const bg = ctx.createLinearGradient(0, baseY - size * 0.25, 0, H);
+    bg.addColorStop(0, 'rgba(8,6,18,0)');
+    bg.addColorStop(0.35, 'rgba(8,6,18,0.42)');
+    bg.addColorStop(1, 'rgba(8,6,18,0.66)');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, baseY - size * 0.25, W, H - baseY + size * 0.25);
+  }
 
-  const polys = layout.panels.map((p) => scalePoly(p, w, h));
-  polys.forEach((pts, i) => {
-    const photo = state.photos[state.panelPhoto[i] ?? i % Math.max(1, state.photos.length)] || null;
-    drawPanelPhoto(ctx, pts, state.photos.length ? photo : null, theme);
+  const grad = ctx.createLinearGradient(0, baseY, 0, baseY + Math.max(1, lines.length) * lineH);
+  theme.title.forEach((col, i) => {
+    grad.addColorStop(theme.title.length === 1 ? 0 : i / (theme.title.length - 1), col);
   });
 
-  applyWash(ctx, w, h, theme);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  lines.forEach((ln, i) => {
+    const y = baseY + size + i * lineH;
+    ctx.font = fontFor(size);
+    // Offset shadow pass.
+    ctx.fillStyle = 'rgba(10,4,24,0.6)';
+    ctx.fillText(ln, W / 2 + size * 0.07, y + size * 0.07);
+    // Heavy dark outline.
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(2, size * 0.13);
+    ctx.strokeStyle = '#150e24';
+    ctx.strokeText(ln, W / 2, y);
+    // Gradient face.
+    ctx.fillStyle = grad;
+    ctx.fillText(ln, W / 2, y);
+  });
 
-  // Light gutters: every panel edge stroked over the wash.
-  const gutterWidth = Math.max(5, w * 0.0075);
-  ctx.lineJoin = 'round';
-  for (const pts of polys) {
-    tracePath(ctx, pts);
-    ctx.strokeStyle = theme.gutter;
-    ctx.lineWidth = gutterWidth;
-    ctx.stroke();
-  }
-
-  drawLettering(ctx, w, h, state, theme);
-  applyVignette(ctx, w, h);
-  applyGrain(ctx, w, h);
-
-  if (state.highlight != null && state.highlight >= 0 && polys[state.highlight]) {
-    tracePath(ctx, polys[state.highlight]);
-    ctx.strokeStyle = '#22d3ee';
-    ctx.lineWidth = Math.max(3, w * 0.004);
-    ctx.setLineDash([14, 9]);
-    ctx.stroke();
-    ctx.setLineDash([]);
+  if (tagline) {
+    const y = baseY + lines.length * lineH + tagGap;
+    ctx.font = `700 ${tagSize}px Arial, Helvetica, sans-serif`;
+    try { ctx.letterSpacing = `${Math.round(tagSize * 0.42)}px`; } catch (e) { /* older engines */ }
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(1.5, tagSize * 0.16);
+    ctx.strokeStyle = 'rgba(12,8,26,0.9)';
+    ctx.strokeText(tagline, W / 2, y);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(tagline, W / 2, y);
+    try { ctx.letterSpacing = '0px'; } catch (e) { /* noop */ }
   }
   ctx.restore();
 }
 
-/** Which panel of a layout sits under point (x, y) of a w x h canvas, or -1. */
-export function panelAt(layoutName, w, h, x, y) {
-  const layout = LAYOUTS[layoutName] || LAYOUTS.hero;
-  const polys = layout.panels.map((p) => scalePoly(p, w, h));
-  for (let i = polys.length - 1; i >= 0; i--) {
-    const pts = polys[i];
-    let inside = false;
-    for (let a = 0, b = pts.length - 1; a < pts.length; b = a++) {
-      const [ax, ay] = pts[a];
-      const [bx, by] = pts[b];
-      if (ay > y !== by > y && x < ((bx - ax) * (y - ay)) / (by - ay) + ax) inside = !inside;
-    }
-    if (inside) return i;
+// ------------------------------------------------------------- main entry
+// state: {
+//   layout, theme, title, tagline,
+//   photos: [HTMLImageElement|null, ...] indexed by panel assignment,
+//   panels: [{ photo, zoom, ox, oy }, ...],
+//   selected: index|null, showSelection: bool
+// }
+export function draw(canvas, state) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  const theme = getTheme(state.theme);
+  const panels = getPanels(state.layout, W, H);
+  const defs = state.panels || [];
+
+  ctx.save();
+  ctx.fillStyle = '#0d0a18';
+  ctx.fillRect(0, 0, W, H);
+
+  panels.forEach((panel, i) => {
+    const def = defs[i] || { photo: i, zoom: 1, ox: 0, oy: 0 };
+    const img = state.photos ? state.photos[def.photo] : null;
+    drawPanelPhoto(ctx, img || null, panel.points, def, theme);
+  });
+
+  // Diagonal colour wash unifies the collage.
+  const wash = ctx.createLinearGradient(0, 0, W, H);
+  theme.overlay.forEach((col, i) => {
+    wash.addColorStop(theme.overlay.length === 1 ? 0 : i / (theme.overlay.length - 1), col);
+  });
+  ctx.globalCompositeOperation = 'soft-light';
+  ctx.fillStyle = wash;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = wash;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+
+  // Pale seams between panels.
+  const seam = Math.max(3, Math.round(W * 0.0055));
+  ctx.lineJoin = 'round';
+  for (const panel of panels) {
+    tracePath(ctx, panel.points);
+    ctx.lineWidth = seam;
+    ctx.strokeStyle = theme.gap;
+    ctx.stroke();
   }
-  return -1;
+
+  drawTitle(ctx, W, H, state, theme);
+
+  // Vignette.
+  const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.42, W / 2, H / 2, Math.max(W, H) * 0.78);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(4,2,12,0.5)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Seeded grain, identical on every render.
+  const tile = getGrainTile();
+  const pattern = ctx.createPattern(tile, 'repeat');
+  if (pattern) {
+    ctx.save();
+    ctx.globalAlpha = 0.05;
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  // Editor-only selection outline.
+  if (state.showSelection && typeof state.selected === 'number' && panels[state.selected]) {
+    tracePath(ctx, panels[state.selected].points);
+    ctx.lineWidth = Math.max(3, W * 0.006);
+    ctx.strokeStyle = theme.accent;
+    ctx.stroke();
+    tracePath(ctx, panels[state.selected].points);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(10,8,20,0.85)';
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }

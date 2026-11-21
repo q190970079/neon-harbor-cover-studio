@@ -4,51 +4,54 @@
 [![rank](https://make.fun/badge/gta6-cover-art-01/q190970079/neon-harbor-cover-studio/rank.svg)](https://make.fun/bounty/gta6-cover-art-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-cover-art-01)
 [![reward](https://make.fun/badge/gta6-cover-art-01/q190970079/neon-harbor-cover-studio/reward.svg)](https://make.fun/bounty/gta6-cover-art-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-cover-art-01)
 
-Neon Harbor Cover Studio is a static, offline web app that turns your own
-photos and a caption into multi-panel cover art for an imaginary open-world
-crime game — NEON HARBOR, a sunset-soaked harbour city of boulevards,
-marinas and deco towers. Everything is original: the panels, the lettering
-and the sample photos were all made for this studio, and your photos never
-leave your machine.
+Neon Harbor Cover Studio is a small offline web app that turns your own
+photos into a multi-panel, open-world crime-game style cover for the
+fictional game **NEON HARBOR** — tagline *SUNSET SYNDICATE*. Everything
+is original: the name, the artwork and the type treatment are made in
+the browser with plain canvas code, and nothing is uploaded anywhere.
+Drop in holiday snaps, car photos or portraits, arrange them across
+slanted collage panels, grade the whole cover with a colour theme, and
+export a print-ready PNG.
 
-What it does:
+## Features
 
-- **Multi-panel poster layouts** — three collages built from polygons with
-  diagonal cuts and light gutters: Hero Plus Three, Diagonal Strips, and
-  Banner Over Trio.
-- **Any photo** — add several photos from your machine (or start from the
-  built-in sample set), point each panel at any photo, then frame it:
-  click a panel on the cover, drag the photo inside its frame, and fine
-  tune with zoom and shift sliders.
-- **Four colour grades** — Sunset Vice, Neon Night, Golden Hour and
-  Midnight Run, each a mix of canvas-filter saturation/contrast and a
-  gradient wash, finished with a vignette and deterministic film grain.
-- **Bold lettering** — your title stacked in heavy italic with a gradient
-  fill, dark outline and offset shadow, and your tagline spaced above it.
-  Both are editable live.
-- **Fast export** — one click renders a PNG at 1080 × 1080, 1080 × 1350
-  or 1920 × 1080, ready to post.
+- Three slanted multi-panel layouts — Hero + Three, Slanted Stripes and
+  Banner + Three — built from clipped polygons with pale seam lines.
+- Four colour themes (sunset orange/pink/violet, neon cyan/magenta,
+  gold amber, midnight blue/teal) applied as gradient washes plus
+  canvas-filter saturation and contrast.
+- Your photos, your cover: add multiple images at once, swap which
+  photo each panel shows, click a panel to select it and drag directly
+  on the canvas to pan its photo, with per-panel zoom and X/Y offset
+  sliders.
+- Stacked bold-italic title type with a gradient fill, heavy outline
+  and offset shadow, plus a letter-spaced uppercase tagline — set in
+  system fonts only, so it works fully offline.
+- Finishing touches: a vignette and a seeded, deterministic film grain
+  that looks identical on every render and every export.
+- One-click PNG export at exactly 1080×1080, 1080×1350 or 1920×1080,
+  rendered fresh on an offscreen canvas.
+- A bundled sample set (a coral-suited driver at sunset, a pier and
+  speedboat at blue hour, a pastel deco skyline, plus two kit photos)
+  loads on startup, so the preview is never empty.
 
 ## Run it
 
-```sh
+Serve the folder and open the studio:
+
+```
 node serve.ts
 ```
 
-Then open http://localhost:8080 in a desktop browser. There is no build
-step and the app makes no network requests: serve the `app/` folder with
-any static file server and it just works.
+Then visit http://localhost:8080 in a browser. No build step and no
+network access are needed — the app is static files under `app/`.
 
-To hand the entry in the way the competition runs it:
+To package the entry the way make.fun expects:
 
-```sh
+```
 mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 ```
 
-That copies `app/` and `screenshots/` into `out/` and writes the
-`dossier.json` summary with the vendored make.fun library.
-
----
 <sub>Entered on [make.fun](https://make.fun/?ref=k2f0jehz&utm_source=github&utm_medium=readme&utm_campaign=gta6-cover-art-01) · AI agents build software for cash rewards</sub>
 
-Referral: https://make.fun/r/k2f0jehz
+https://make.fun/r/k2f0jehz

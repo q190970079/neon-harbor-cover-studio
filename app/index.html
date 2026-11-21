@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -8,76 +8,81 @@
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<main class="app">
-  <aside class="controls">
-    <header class="masthead">
-      <h1>Neon Harbor <span>Cover Studio</span></h1>
-      <p>Your photos, cut into a multi-panel sunset poster. Bold lettering,
-      a neon grade, one PNG — no uploads, everything happens on your machine.</p>
-    </header>
+<header class="masthead">
+  <div class="brand">
+    <span class="brand-mark">NH</span>
+    <div>
+      <h1>Neon Harbor Cover Studio</h1>
+      <p>Turn your own photos into a multi-panel open-world cover.</p>
+    </div>
+  </div>
+</header>
 
+<main class="workspace">
+  <aside class="controls" aria-label="Cover controls">
     <section class="group">
-      <h2>1 · Photos</h2>
-      <label class="file-drop">Add your photos
-        <input id="photoFiles" type="file" accept="image/*" multiple>
+      <h2>Photos</h2>
+      <label class="file-btn">
+        Add your photos
+        <input id="fileInput" type="file" accept="image/*" multiple hidden>
       </label>
-      <div class="button-row">
-        <button id="loadSamples" type="button">Load sample set</button>
-        <button id="clearPhotos" type="button" class="ghost">Clear</button>
-      </div>
-      <p class="hint">Or add one sample at a time:</p>
-      <div id="sampleRow" class="chip-row"></div>
+      <button id="loadSamples" type="button" class="ghost-btn">Load sample set</button>
+      <p id="photoCount" class="hint">No photos yet.</p>
     </section>
 
     <section class="group">
-      <h2>2 · Panels</h2>
-      <label>Layout
-        <select id="layoutSel"></select>
-      </label>
+      <h2>Panels</h2>
       <div id="panelList" class="panel-list"></div>
-      <p id="framingNote" class="hint">Framing the selected panel's photo.</p>
-      <label>Zoom
-        <input id="zoomRange" type="range" min="1" max="2.5" step="0.01" value="1">
+      <p id="selectedLabel" class="hint">Editing panel 1</p>
+      <label class="slider-row">Zoom
+        <input id="zoom" type="range" min="1" max="3" step="0.01" value="1">
       </label>
-      <label>Shift left / right
-        <input id="oxRange" type="range" min="-1" max="1" step="0.01" value="0">
+      <label class="slider-row">Offset X
+        <input id="offsetX" type="range" min="-1" max="1" step="0.01" value="0">
       </label>
-      <label>Shift up / down
-        <input id="oyRange" type="range" min="-1" max="1" step="0.01" value="0">
+      <label class="slider-row">Offset Y
+        <input id="offsetY" type="range" min="-1" max="1" step="0.01" value="0">
+      </label>
+      <p class="hint">Tip: click a panel on the canvas, then drag to pan its photo.</p>
+    </section>
+
+    <section class="group">
+      <h2>Look</h2>
+      <label class="field">Layout
+        <select id="layout"></select>
+      </label>
+      <label class="field">Theme
+        <select id="theme"></select>
       </label>
     </section>
 
     <section class="group">
-      <h2>3 · Look</h2>
-      <label>Colour grade
-        <select id="themeSel"></select>
+      <h2>Words</h2>
+      <label class="field">Title
+        <input id="title" type="text" value="NEON HARBOR" maxlength="40" autocomplete="off">
+      </label>
+      <label class="field">Tagline
+        <input id="tagline" type="text" value="SUNSET SYNDICATE" maxlength="48" autocomplete="off">
       </label>
     </section>
 
     <section class="group">
-      <h2>4 · Words</h2>
-      <label>Title
-        <input id="titleText" type="text" maxlength="30" value="NEON HARBOR">
+      <h2>Export</h2>
+      <label class="field">Size
+        <select id="size"></select>
       </label>
-      <label>Tagline
-        <input id="taglineText" type="text" maxlength="40" value="SUNSET SYNDICATE">
-      </label>
-    </section>
-
-    <section class="group">
-      <h2>5 · Export</h2>
-      <label>Post size
-        <select id="sizeSel"></select>
-      </label>
-      <button id="exportBtn" type="button" class="export">Export PNG</button>
-      <p id="statusLine" role="status" class="status"></p>
+      <button id="exportBtn" type="button" class="export-btn">Export PNG</button>
     </section>
   </aside>
 
-  <section class="stage-wrap">
-    <canvas id="stage" width="1080" height="1080" aria-label="Cover preview"></canvas>
+  <section class="stage">
+    <p id="status" class="status" role="status">Loading the sample set…</p>
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="1080" height="1080"></canvas>
+    </div>
   </section>
 </main>
+
 <script type="module" src="./src/studio.js"></script>
 </body>
 </html>

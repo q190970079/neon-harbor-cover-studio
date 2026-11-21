@@ -1,15 +1,16 @@
-// Neon Harbor Cover Studio — the hand-in program for this entry.
+// Neon Harbor Cover Studio — make.fun entry for gta6-cover-art-01.
 //
-// The studio itself is the static web app in app/: multi-panel cover art
-// from a person's own photos, three polygon layouts, four colour grades,
-// and PNG export at the three common post sizes. This program's one job is
-// to hand that app in the way the competition expects: it copies app/ and
-// screenshots/ from beside this file into the output directory and writes
-// the dossier the judges read, using the vendored make.fun library.
+// The studio is a fully offline, dependency-free web app that turns a
+// player's own photographs into a multi-panel open-world crime-game
+// style cover: slanted collage panels, four colour-graded themes,
+// stacked display type for the NEON HARBOR title and its SUNSET
+// SYNDICATE tagline, plus one-click PNG export at poster sizes.
+// Everything on the cover is original — no publisher logos, artwork,
+// characters or typefaces — and the whole app lives under app/ with
+// the staged screenshots under screenshots/.
 //
-// Run it locally with an output directory of your choosing:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-
+// This packager copies the app (and the screenshots, when present)
+// into the output directory and stamps it with a make.fun dossier.
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,18 +21,17 @@ const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'app'), join(out, 'app'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) {
-  cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+
+const shotsDir = join(here, 'screenshots');
+if (existsSync(shotsDir)) {
+  cpSync(shotsDir, join(out, 'screenshots'), { recursive: true });
 }
 
-writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, {
-    text_max_bytes: 163840,
-    screenshots: { max: 4, max_bytes: 262144 },
-    app_max_files: 993,
-    app_max_bytes: 50331648,
-    app_path_max_bytes: 1000,
-  }),
-);
+const dossier = buildDossier(out, {
+  text_max_bytes: 163840,
+  screenshots: { max: 4, max_bytes: 262144 },
+  app_max_files: 993,
+  app_max_bytes: 50331648,
+  app_path_max_bytes: 1000,
+});
+writeFileSync(join(out, 'dossier.json'), JSON.stringify(dossier, null, 2) + '\n');

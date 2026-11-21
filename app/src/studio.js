@@ -1,306 +1,367 @@
-// studio.js — the editor wiring for Neon Harbor Cover Studio.
-//
-// panels.js knows how to draw a cover; this file knows how a person makes
-// one: adding their own photos, pointing panels at photos, dragging a
-// photo around inside its panel, choosing a layout, a grade and a post
-// size, and exporting the finished PNG. The preview and the export run
-// through the same drawCover call, so what you see is the file you get.
+// studio.js — Neon Harbor Cover Studio editor logic.
+// Owns the state, wires every control, handles photo loading, canvas
+// selection/dragging, and PNG export at the exact chosen size.
+import { draw, getPanels, hitTestPanel, LAYOUTS, THEMES } from './panels.js';
 
-import { LAYOUTS, THEMES, drawCover, panelAt } from './panels.js';
-import { runShot } from './shots.js';
+export const SAMPLES = [
+  { name: 'hero', src: 'samples/hero.jpg', label: 'Hero — coral suit & convertible' },
+  { name: 'boat', src: 'samples/boat.jpg', label: 'Boat — pier at blue hour' },
+  { name: 'deco', src: 'samples/deco.jpg', label: 'Deco — pastel skyline art' },
+  { name: 'boulevard', src: 'samples/boulevard.jpg', label: 'Boulevard — kit sample' },
+  { name: 'pier', src: 'samples/pier.jpg', label: 'Pier — kit sample' },
+];
 
-/** The built-in sample set: generated for this studio, free to play with. */
-const SAMPLE_DEFS = {
-  hero: { file: 'hero.jpg', label: 'Coral Blazer', ox: 0.1, oy: 0 },
-  boat: { file: 'boat.jpg', label: 'Marina Blue Hour', ox: -0.05, oy: 0 },
-  deco: { file: 'deco.jpg', label: 'Deco Skyline', ox: 0, oy: 0 },
-  boulevard: { file: 'boulevard.jpg', label: 'The Boulevard', ox: 0, oy: 0 },
-  pier: { file: 'pier.jpg', label: 'The Pier', ox: 0, oy: 0 },
-};
+export const EXPORT_SIZES = [
+  { id: '1080x1080', w: 1080, h: 1080, label: 'Square — 1080 × 1080' },
+  { id: '1080x1350', w: 1080, h: 1350, label: 'Portrait — 1080 × 1350' },
+  { id: '1920x1080', w: 1920, h: 1080, label: 'Wide — 1920 × 1080' },
+];
 
-const EXPORT_SIZES = ['1080x1080', '1080x1350', '1920x1080'];
+const defaultPanel = (i) => ({ photo: i, zoom: 1, ox: 0, oy: 0 });
 
-const canvas = document.getElementById('stage');
-const ctx = canvas.getContext('2d');
-const statusLine = document.getElementById('statusLine');
-
-const state = {
+export const state = {
   layout: 'hero',
   theme: 'sunset',
   title: 'NEON HARBOR',
   tagline: 'SUNSET SYNDICATE',
-  photos: [],
-  panelPhoto: [0, 1, 2, 3],
-  highlight: 0,
+  size: '1080x1080',
+  photos: [], // [{ img, name }]
+  panels: [defaultPanel(0), defaultPanel(1), defaultPanel(2), defaultPanel(3)],
+  selected: 0,
 };
-let selectedPanel = 0;
-const loadedSamples = new Set();
 
-/** Load an image from a URL, resolving once it can be drawn. */
-function loadImage(url) {
+export const els = {};
+function grab(id) { els[id] = document.getElementById(id); return els[id]; }
+
+function setStatus(msg) {
+  if (els.status) els.status.textContent = msg;
+}
+
+export function renderState(showSelection) {
+  return {
+    layout: state.layout,
+    theme: state.theme,
+    title: state.title,
+    tagline: state.tagline,
+    photos: state.photos.map((p) => p.img),
+    panels: state.panels,
+    selected: state.selected,
+    showSelection,
+  };
+}
+
+export function redraw() {
+  const canvas = els.canvas;
+  if (!canvas) return;
+  draw(canvas, renderState(true));
+}
+
+function loadImage(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
     img.onerror = reject;
-    img.src = url;
+    img.src = src;
   });
 }
 
-function setStatus(text) {
-  statusLine.textContent = text;
-}
-
-/** The photo the selected panel currently shows, or null. */
-function selectedPhoto() {
-  if (!state.photos.length) return null;
-  return state.photos[state.panelPhoto[selectedPanel] % state.photos.length] || null;
-}
-
-/** Redraw the preview from the current state. */
-function redraw() {
-  drawCover(ctx, canvas.width, canvas.height, state);
-}
-
-/** Keep every panel pointed at a photo that exists. */
-function clampPanels() {
-  const n = Math.max(1, state.photos.length);
-  state.panelPhoto = state.panelPhoto.map((p, i) => ((p ?? i) % n + n) % n);
-}
-
-/** Load sample photos by their short names, skipping ones already in. */
-async function loadSamplePhotos(names) {
-  for (const name of names) {
-    const def = SAMPLE_DEFS[name];
-    if (!def || loadedSamples.has(name)) continue;
-    const img = await loadImage(`samples/${def.file}`);
-    state.photos.push({ img, name: def.label, zoom: 1, ox: def.ox, oy: def.oy });
-    loadedSamples.add(name);
+// Loads the built-in sample set (used on startup so the preview is
+// never empty, and by the "Load sample set" button).
+export async function loadSampleSet() {
+  const loaded = [];
+  for (const s of SAMPLES) {
+    try {
+      const img = await loadImage(s.src);
+      loaded.push({ img, name: s.name });
+    } catch (e) { /* skip a missing sample, keep the rest */ }
   }
-  clampPanels();
-  buildPanelList();
-}
-
-/** Add the person's own photos from a file input's FileList. */
-async function addUserPhotos(files) {
-  for (const file of files) {
-    const img = await loadImage(URL.createObjectURL(file));
-    state.photos.push({ img, name: file.name.replace(/\.[^.]+$/, ''), zoom: 1, ox: 0, oy: 0 });
+  if (loaded.length) {
+    state.photos = loaded;
+    state.panels = loaded.map((_, i) => defaultPanel(Math.min(i, loaded.length - 1))).slice(0, 4);
+    while (state.panels.length < 4) state.panels.push(defaultPanel(0));
+    state.panels.forEach((p, i) => { p.photo = i % loaded.length; });
+    state.selected = 0;
   }
-  clampPanels();
-  buildPanelList();
+  syncPanelList();
+  syncSliders();
   redraw();
-  setStatus(`${state.photos.length} photo${state.photos.length === 1 ? '' : 's'} in the studio. Click a panel, drag to frame it.`);
+  setStatus(loaded.length
+    ? `Sample set loaded — ${loaded.length} photos across ${state.panels.length} panels. Click a panel, then drag its photo.`
+    : 'Sample photos could not be loaded. Add your own photos to begin.');
+  return loaded.length;
 }
 
-/** Rebuild the panel list: one row per panel, its photo, and a swap button. */
-function buildPanelList() {
-  const list = document.getElementById('panelList');
+// Loads a specific ordered list of sample names (screenshot scenes).
+export async function loadSamplesByNames(names) {
+  const loaded = [];
+  for (const name of names) {
+    const s = SAMPLES.find((x) => x.name === name);
+    if (!s) continue;
+    try {
+      const img = await loadImage(s.src);
+      loaded.push({ img, name: s.name });
+    } catch (e) { /* keep going */ }
+  }
+  if (loaded.length) {
+    state.photos = loaded;
+    state.panels = [0, 1, 2, 3].map((i) => defaultPanel(i % loaded.length));
+    state.selected = 0;
+  }
+  syncPanelList();
+  syncSliders();
+  redraw();
+  return loaded.length;
+}
+
+async function addUserFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  let added = 0;
+  for (const file of files) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await loadImage(url);
+      state.photos.push({ img, name: file.name });
+      added++;
+    } catch (e) { /* not a readable image */ }
+  }
+  // Hand fresh photos to panels that are still sharing one.
+  if (added) {
+    let cursor = state.photos.length - added;
+    for (const p of state.panels) {
+      if (cursor >= state.photos.length) break;
+      if (state.panels.filter((q) => q.photo === p.photo).length > 1 || added === state.photos.length) {
+        p.photo = cursor++;
+      }
+    }
+  }
+  syncPanelList();
+  redraw();
+  setStatus(added
+    ? `Added ${added} photo${added === 1 ? '' : 's'} — ${state.photos.length} in the studio now.`
+    : 'Those files could not be read as images.');
+}
+
+// ------------------------------------------------------------- panel list
+export function syncPanelList() {
+  const list = els.panelList;
+  if (!list) return;
   list.innerHTML = '';
-  const panels = LAYOUTS[state.layout].panels;
-  panels.forEach((_, i) => {
+  state.panels.forEach((p, i) => {
     const row = document.createElement('div');
-    row.className = 'panel-row' + (i === selectedPanel ? ' active' : '');
+    row.className = 'panel-row' + (i === state.selected ? ' is-selected' : '');
+
     const pick = document.createElement('button');
     pick.type = 'button';
     pick.className = 'panel-pick';
-    const photo = state.photos[state.panelPhoto[i] % Math.max(1, state.photos.length)];
-    pick.textContent = `Panel ${i + 1} · ${photo ? photo.name : 'Empty'}`;
-    pick.addEventListener('click', () => selectPanel(i));
+    const photoName = state.photos[p.photo] ? state.photos[p.photo].name : 'none';
+    pick.textContent = `Panel ${i + 1} · ${photoName}`;
+    pick.addEventListener('click', () => {
+      state.selected = i;
+      syncPanelList();
+      syncSliders();
+      redraw();
+    });
+
     const swap = document.createElement('button');
     swap.type = 'button';
     swap.className = 'panel-swap';
     swap.textContent = 'Swap photo';
+    swap.title = 'Give this panel the next photo';
     swap.addEventListener('click', () => {
       if (!state.photos.length) return;
-      state.panelPhoto[i] = (state.panelPhoto[i] + 1) % state.photos.length;
-      selectPanel(i);
+      p.photo = (p.photo + 1) % state.photos.length;
+      state.selected = i;
+      syncPanelList();
+      syncSliders();
+      redraw();
+      setStatus(`Panel ${i + 1} now shows ${state.photos[p.photo].name}.`);
     });
-    row.append(pick, swap);
-    list.append(row);
+
+    row.appendChild(pick);
+    row.appendChild(swap);
+    list.appendChild(row);
+  });
+  if (els.photoCount) {
+    els.photoCount.textContent = state.photos.length
+      ? state.photos.map((p, i) => `${i + 1}. ${p.name}`).join('  ·  ')
+      : 'No photos yet.';
+  }
+}
+
+// ---------------------------------------------------------------- sliders
+export function syncSliders() {
+  const p = state.panels[state.selected];
+  if (!p) return;
+  if (els.zoom) els.zoom.value = String(p.zoom);
+  if (els.offsetX) els.offsetX.value = String(p.ox);
+  if (els.offsetY) els.offsetY.value = String(p.oy);
+  if (els.selectedLabel) els.selectedLabel.textContent = `Editing panel ${state.selected + 1}`;
+}
+
+function bindSlider(el, key, parse) {
+  if (!el) return;
+  el.addEventListener('input', () => {
+    const p = state.panels[state.selected];
+    if (!p) return;
+    p[key] = parse(el.value);
+    redraw();
   });
 }
 
-/** Select a panel: highlight it, and point the framing sliders at its photo. */
-function selectPanel(i) {
-  selectedPanel = i;
-  state.highlight = i;
-  syncFramingControls();
-  buildPanelList();
-  redraw();
+// ----------------------------------------------------------------- canvas
+function canvasPoint(evt) {
+  const rect = els.canvas.getBoundingClientRect();
+  return {
+    x: ((evt.clientX - rect.left) / rect.width) * els.canvas.width,
+    y: ((evt.clientY - rect.top) / rect.height) * els.canvas.height,
+    rect,
+  };
 }
 
-/** Push the selected photo's zoom and offsets into the framing sliders. */
-function syncFramingControls() {
-  const photo = selectedPhoto();
-  document.getElementById('zoomRange').value = photo ? photo.zoom : 1;
-  document.getElementById('oxRange').value = photo ? photo.ox : 0;
-  document.getElementById('oyRange').value = photo ? photo.oy : 0;
-  document.getElementById('framingNote').textContent = photo
-    ? `Framing panel ${selectedPanel + 1}'s photo — drag the cover or use the sliders.`
-    : 'Add a photo to start framing.';
+function bindCanvas() {
+  const canvas = els.canvas;
+  let drag = null;
+  canvas.addEventListener('pointerdown', (evt) => {
+    const pt = canvasPoint(evt);
+    const hit = hitTestPanel(state.layout, canvas.width, canvas.height, pt.x, pt.y);
+    if (hit >= 0) {
+      state.selected = hit;
+      syncPanelList();
+      syncSliders();
+    }
+    drag = { x: evt.clientX, y: evt.clientY };
+    canvas.setPointerCapture(evt.pointerId);
+    redraw();
+  });
+  canvas.addEventListener('pointermove', (evt) => {
+    if (!drag) return;
+    const p = state.panels[state.selected];
+    if (!p) return;
+    const rect = canvas.getBoundingClientRect();
+    const dx = (evt.clientX - drag.x) / rect.width;
+    const dy = (evt.clientY - drag.y) / rect.height;
+    drag = { x: evt.clientX, y: evt.clientY };
+    p.ox = Math.max(-1, Math.min(1, p.ox + dx * 2.2));
+    p.oy = Math.max(-1, Math.min(1, p.oy + dy * 2.2));
+    syncSliders();
+    redraw();
+  });
+  const end = () => { drag = null; };
+  canvas.addEventListener('pointerup', end);
+  canvas.addEventListener('pointercancel', end);
 }
 
-/** Push the whole state into the controls (used after a shot scene loads). */
-function syncControls() {
-  document.getElementById('layoutSel').value = state.layout;
-  document.getElementById('themeSel').value = state.theme;
-  document.getElementById('titleText').value = state.title;
-  document.getElementById('taglineText').value = state.tagline;
-  syncFramingControls();
-  buildPanelList();
+// ----------------------------------------------------------------- export
+export function sizeById(id) {
+  return EXPORT_SIZES.find((s) => s.id === id) || EXPORT_SIZES[0];
 }
 
-/** Apply a partial patch to the state (shot scenes use this). */
-function setPatch(patch) {
-  Object.assign(state, patch);
-  clampPanels();
+function applyCanvasSize() {
+  const s = sizeById(state.size);
+  els.canvas.width = s.w;
+  els.canvas.height = s.h;
 }
 
-/** Render the cover at the chosen export size and download it as a PNG. */
-function exportPng() {
-  const [w, h] = document.getElementById('sizeSel').value.split('x').map(Number);
-  const out = document.createElement('canvas');
-  out.width = w;
-  out.height = h;
-  drawCover(out.getContext('2d'), w, h, { ...state, highlight: -1 });
-  out.toBlob((blob) => {
+export function exportPng() {
+  const s = sizeById(state.size);
+  const off = document.createElement('canvas');
+  off.width = s.w;
+  off.height = s.h;
+  draw(off, renderState(false));
+  off.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `neon-harbor-cover-${w}x${h}.png`;
+    a.href = url;
+    a.download = 'neon-harbor-cover.png';
+    document.body.appendChild(a);
     a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    setStatus(`Saved neon-harbor-cover-${w}x${h}.png — post it anywhere.`);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    setStatus(`Exported neon-harbor-cover.png at ${s.w} × ${s.h}.`);
   }, 'image/png');
 }
 
-/** Fill a select with [value, label] pairs. */
-function fillSelect(id, pairs) {
-  const sel = document.getElementById(id);
-  for (const [value, label] of pairs) {
-    const opt = document.createElement('option');
-    opt.value = value;
-    opt.textContent = label;
-    sel.append(opt);
-  }
-  return sel;
-}
-
-function wireControls() {
-  fillSelect('layoutSel', Object.entries(LAYOUTS).map(([k, v]) => [k, v.label]));
-  fillSelect('themeSel', Object.entries(THEMES).map(([k, v]) => [k, v.label]));
-  fillSelect('sizeSel', EXPORT_SIZES.map((s) => [s, s.replace('x', ' × ')]));
-  document.getElementById('layoutSel').value = state.layout;
-  document.getElementById('themeSel').value = state.theme;
-  document.getElementById('sizeSel').value = '1080x1080';
-
-  document.getElementById('photoFiles').addEventListener('change', async (e) => {
-    if (e.target.files.length) await addUserPhotos(e.target.files);
-    e.target.value = '';
-  });
-  document.getElementById('loadSamples').addEventListener('click', async () => {
-    await loadSamplePhotos(Object.keys(SAMPLE_DEFS));
-    redraw();
-    setStatus('Sample set loaded. Swap any panel photo, or add your own.');
-  });
-  document.getElementById('clearPhotos').addEventListener('click', () => {
-    state.photos = [];
-    loadedSamples.clear();
-    clampPanels();
-    buildPanelList();
-    syncFramingControls();
-    redraw();
-    setStatus('Cleared. Add your own photos to build a cover.');
-  });
-
-  const sampleRow = document.getElementById('sampleRow');
-  for (const [key, def] of Object.entries(SAMPLE_DEFS)) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'chip';
-    b.textContent = def.label;
-    b.addEventListener('click', async () => {
-      await loadSamplePhotos([key]);
-      redraw();
-    });
-    sampleRow.append(b);
-  }
-
-  document.getElementById('layoutSel').addEventListener('change', (e) => {
-    state.layout = e.target.value;
-    buildPanelList();
-    redraw();
-  });
-  document.getElementById('themeSel').addEventListener('change', (e) => {
-    state.theme = e.target.value;
-    redraw();
-  });
-  document.getElementById('sizeSel').addEventListener('change', (e) => {
-    const [w, h] = e.target.value.split('x').map(Number);
-    canvas.width = w;
-    canvas.height = h;
-    redraw();
-  });
-  document.getElementById('titleText').addEventListener('input', (e) => {
-    state.title = e.target.value;
-    redraw();
-  });
-  document.getElementById('taglineText').addEventListener('input', (e) => {
-    state.tagline = e.target.value;
-    redraw();
-  });
-
-  const framing = (id, key) => {
-    document.getElementById(id).addEventListener('input', (e) => {
-      const photo = selectedPhoto();
-      if (!photo) return;
-      photo[key] = Number(e.target.value);
-      redraw();
-    });
-  };
-  framing('zoomRange', 'zoom');
-  framing('oxRange', 'ox');
-  framing('oyRange', 'oy');
-
-  document.getElementById('exportBtn').addEventListener('click', exportPng);
-
-  // Drag on the cover: press selects the panel under the pointer, moving
-  // pans that panel's photo inside its frame.
-  let drag = null;
-  canvas.addEventListener('pointerdown', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * canvas.width;
-    const y = ((e.clientY - rect.top) / rect.height) * canvas.height;
-    const hit = panelAt(state.layout, canvas.width, canvas.height, x, y);
-    if (hit < 0) return;
-    selectPanel(hit);
-    const photo = selectedPhoto();
-    if (!photo) return;
-    drag = { startX: e.clientX, startY: e.clientY, ox: photo.ox, oy: photo.oy, rect };
-    canvas.setPointerCapture(e.pointerId);
-  });
-  canvas.addEventListener('pointermove', (e) => {
-    if (!drag) return;
-    const photo = selectedPhoto();
-    if (!photo) return;
-    photo.ox = Math.max(-1, Math.min(1, drag.ox + ((e.clientX - drag.startX) / drag.rect.width) * 1.6));
-    photo.oy = Math.max(-1, Math.min(1, drag.oy + ((e.clientY - drag.startY) / drag.rect.height) * 1.6));
-    syncFramingControls();
-    redraw();
-  });
-  const endDrag = () => { drag = null; };
-  canvas.addEventListener('pointerup', endDrag);
-  canvas.addEventListener('pointercancel', endDrag);
-}
-
-const editor = { canvas, loadSamplePhotos, setPatch, syncControls, redraw };
-wireControls();
-syncControls();
-redraw();
-
-const shotRan = await runShot(editor);
-if (!shotRan) {
-  await loadSamplePhotos(['hero', 'boat', 'deco', 'boulevard']);
-  syncControls();
+// ------------------------------------------------------------- scene hook
+// Used by shots.js to stage a deterministic screenshot scene.
+export async function applyScene(scene) {
+  if (scene.layout && LAYOUTS.some((l) => l.id === scene.layout)) state.layout = scene.layout;
+  if (scene.theme && THEMES[scene.theme]) state.theme = scene.theme;
+  if (typeof scene.title === 'string') state.title = scene.title;
+  if (typeof scene.tagline === 'string') state.tagline = scene.tagline;
+  if (scene.size && sizeById(scene.size).id === scene.size) state.size = scene.size;
+  if (els.layout) els.layout.value = state.layout;
+  if (els.theme) els.theme.value = state.theme;
+  if (els.size) els.size.value = state.size;
+  if (els.title) els.title.value = state.title;
+  if (els.tagline) els.tagline.value = state.tagline;
+  if (scene.photos && scene.photos.length) await loadSamplesByNames(scene.photos);
+  applyCanvasSize();
   redraw();
-  setStatus('Sample set loaded. Add your own photos, swap panels, make it yours.');
+}
+
+// -------------------------------------------------------------------- init
+function fillSelect(el, items, getValue, getLabel) {
+  if (!el) return;
+  el.innerHTML = '';
+  for (const item of items) {
+    const opt = document.createElement('option');
+    opt.value = getValue(item);
+    opt.textContent = getLabel(item);
+    el.appendChild(opt);
+  }
+}
+
+function init() {
+  ['canvas', 'status', 'fileInput', 'loadSamples', 'panelList', 'photoCount',
+    'layout', 'theme', 'size', 'title', 'tagline', 'zoom', 'offsetX', 'offsetY',
+    'selectedLabel', 'exportBtn'].forEach(grab);
+
+  fillSelect(els.layout, LAYOUTS, (l) => l.id, (l) => l.label);
+  fillSelect(els.theme, Object.entries(THEMES).map(([id, t]) => ({ id, ...t })), (t) => t.id, (t) => t.label);
+  fillSelect(els.size, EXPORT_SIZES, (s) => s.id, (s) => s.label);
+  els.layout.value = state.layout;
+  els.theme.value = state.theme;
+  els.size.value = state.size;
+  els.title.value = state.title;
+  els.tagline.value = state.tagline;
+
+  els.fileInput.addEventListener('change', () => {
+    addUserFiles(els.fileInput.files);
+    els.fileInput.value = '';
+  });
+  els.loadSamples.addEventListener('click', () => loadSampleSet());
+  els.layout.addEventListener('change', () => { state.layout = els.layout.value; redraw(); });
+  els.theme.addEventListener('change', () => { state.theme = els.theme.value; redraw(); });
+  els.size.addEventListener('change', () => { state.size = els.size.value; applyCanvasSize(); redraw(); });
+  els.title.addEventListener('input', () => { state.title = els.title.value; redraw(); });
+  els.tagline.addEventListener('input', () => { state.tagline = els.tagline.value; redraw(); });
+  els.exportBtn.addEventListener('click', exportPng);
+
+  bindSlider(els.zoom, 'zoom', (v) => parseFloat(v));
+  bindSlider(els.offsetX, 'ox', (v) => parseFloat(v));
+  bindSlider(els.offsetY, 'oy', (v) => parseFloat(v));
+  bindCanvas();
+
+  applyCanvasSize();
+  syncPanelList();
+  syncSliders();
+  redraw(); // placeholder panels render immediately; samples replace them
+
+  // Screenshot staging lives in shots.js and only activates with ?shot=.
+  // In shot mode the scene loader owns photo loading — starting the
+  // default sample load here as well would race it and overwrite the
+  // staged panel assignments nondeterministically.
+  if (new URLSearchParams(window.location.search).has('shot')) {
+    import('./shots.js').catch(() => { /* editor still works without it */ });
+  } else {
+    loadSampleSet();
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
 }
